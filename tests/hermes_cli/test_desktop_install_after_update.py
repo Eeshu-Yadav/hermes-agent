@@ -72,3 +72,45 @@ def test_failed_swap_keeps_the_previous_bundle_launchable(rebuilt, tmp_path, mon
     assert len(problems) == 1
     assert stale.is_dir() and _asar(stale) == b"stale"
     assert not (stale.parent / "Hermes.app.hermes-update-new").exists()
+
+
+def _installer_bundle(root: Path, bundle_id: str = "com.nousresearch.hermes.setup") -> Path:
+    import plistlib
+
+    app = root / "Hermes.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "MacOS" / "Hermes-Setup").write_bytes(b"\xcf\xfa\xed\xfe")
+    (app / "Contents" / "Resources").mkdir()
+    (app / "Contents" / "Resources" / "icon.icns").write_bytes(b"icns")
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
+    return app
+
+
+def test_installer_bundle_left_by_the_dmg_is_claimed_and_replaced(rebuilt, tmp_path):
+    """#125245: the installer left at the install path is claimed by bundle id and replaced."""
+    installer = _installer_bundle(tmp_path / "Applications")
+
+    assert main_desktop._update_owned_macos_bundles([installer]) == [installer]
+
+    installed, problems = main_desktop._install_rebuilt_macos_bundles(rebuilt, [installer], running=set())
+
+    assert installed == [installer] and problems == []
+    assert _asar(installer) == b"rebuilt"
+    assert not (installer / "Contents" / "MacOS" / "Hermes-Setup").exists()
+    assert not (installer.parent / "Hermes.app.hermes-update-old").exists()
+
+
+def test_unstamped_foreign_bundle_is_not_claimed_but_reported(rebuilt, tmp_path):
+    """#125245: an unstamped foreign bundle is reported once; releases and the installer are not."""
+    foreign = _installer_bundle(tmp_path / "Applications", bundle_id="com.example.other")
+    installer = _installer_bundle(tmp_path / "home" / "Applications")
+    self_updating = _bundle(tmp_path / "Volumes" / "Applications", b"release")
+    (self_updating / "Contents" / "Resources" / "install-stamp.json").write_text('{"updateMechanism": "electron-updater"}')
+    candidates = [foreign, installer, self_updating, tmp_path / "missing" / "Hermes.app"]
+
+    assert main_desktop._update_owned_macos_bundles(candidates) == [installer]
+    notices = main_desktop._unowned_macos_bundle_notices(candidates, rebuilt)
+
+    assert len(notices) == 1
+    assert str(foreign) in notices[0] and str(rebuilt) in notices[0]
+    assert "no install stamp" in notices[0]

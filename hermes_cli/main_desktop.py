@@ -974,17 +974,38 @@ def _install_rebuilt_desktop_app(desktop_dir: Path) -> tuple[list[Path], list[st
     if rebuilt_exe is None:
         return [], []
     # .../Hermes.app/Contents/MacOS/Hermes -> .../Hermes.app
-    return _install_rebuilt_macos_bundles(
-        rebuilt_exe.parents[2], _installed_desktop_apps(), running=_running_macos_app_bundles())
+    rebuilt_app = rebuilt_exe.parents[2]
+    candidates = _installed_desktop_app_candidates()
+    installed, problems = _install_rebuilt_macos_bundles(
+        rebuilt_app, _update_owned_macos_bundles(candidates), running=_running_macos_app_bundles())
+    problems.extend(_unowned_macos_bundle_notices(candidates, rebuilt_app))
+    return installed, problems
 
 
 def _refresh_installed_desktop_apps(desktop_dir: Path) -> None:
     """Install the rebuilt bundle over stale installed copies and report each outcome."""
+    installers = {app for app in _installed_desktop_apps() if _macos_bundle_is_bootstrap_installer(app)}
     installed, problems = _install_rebuilt_desktop_app(desktop_dir)
     for app in installed:
-        print(f"  ✓ Installed the rebuilt Desktop app at {app}")
+        note = " (replaced the Hermes-Setup installer)" if app in installers else ""
+        print(f"  ✓ Installed the rebuilt Desktop app at {app}{note}")
     for problem in problems:
         print(f"  ⚠ {problem}")
+
+
+BOOTSTRAP_INSTALLER_BUNDLE_ID = "com.nousresearch.hermes.setup"
+
+
+def _macos_bundle_is_bootstrap_installer(app: Path) -> bool:
+    return _desktop_macos_bundle_id(app) == BOOTSTRAP_INSTALLER_BUNDLE_ID
+
+
+def _macos_bundle_stamp(app: Path) -> dict | None:
+    try:
+        stamp = json.loads((app / "Contents" / "Resources" / "install-stamp.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return stamp if isinstance(stamp, dict) else None
 
 
 def _update_owned_macos_bundles(candidates: list[Path]) -> list[Path]:
@@ -993,25 +1014,32 @@ def _update_owned_macos_bundles(candidates: list[Path]) -> list[Path]:
     Ownership comes from the bundle's own ``install-stamp.json``. ``updateMechanism: self`` is a
     bootstrap build (a local pack or the bootstrap download), and stamps older than the field
     predate every self-updating kind. Bundled/light releases update themselves and commit builds
-    are external, so a local build must never be copied over them. No readable stamp, no claim.
+    are external, so a local build must never be copied over them. No readable stamp, no claim,
+    except the Hermes-Setup installer, known by its bundle id (#125245).
     """
     owned = []
     for app in candidates:
-        try:
-            stamp = json.loads((app / "Contents" / "Resources" / "install-stamp.json").read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(stamp, dict) and stamp.get("updateMechanism", "self") == "self":
+        stamp = _macos_bundle_stamp(app)
+        if stamp is None:
+            if _macos_bundle_is_bootstrap_installer(app):
+                owned.append(app)
+        elif stamp.get("updateMechanism", "self") == "self":
             owned.append(app)
     return owned
 
 
-def _installed_desktop_apps() -> list[Path]:
-    """Installed macOS ``Hermes.app`` bundles this checkout's update owns (none off macOS).
+def _unowned_macos_bundle_notices(candidates: list[Path], rebuilt_app: Path) -> list[str]:
+    return [
+        f"{app} has no install stamp and was not refreshed; if it is an old Hermes Desktop copy, "
+        f"move it to the Trash and copy {rebuilt_app} there"
+        for app in candidates
+        if app.is_dir() and _macos_bundle_stamp(app) is None and not _macos_bundle_is_bootstrap_installer(app)
+    ]
 
-    A packaged app runs the checkout under the default Hermes home, so only that checkout may
-    build for it: a bundle from any other tree (a dev worktree) would split shell from backend.
-    """
+
+def _installed_desktop_app_candidates() -> list[Path]:
+    """Install paths this checkout's update maintains (none off macOS): a packaged app runs the
+    checkout under the default Hermes home, so only that checkout may build for it."""
     if sys.platform != "darwin":
         return []
     from hermes_cli.gui_uninstall import packaged_gui_app_paths  # noqa: PLC0415
@@ -1019,7 +1047,11 @@ def _installed_desktop_apps() -> list[Path]:
     from hermes_constants import get_default_hermes_root  # noqa: PLC0415
     if Path(PROJECT_ROOT).resolve() != (get_default_hermes_root() / "hermes-agent").resolve():
         return []
-    return _update_owned_macos_bundles(packaged_gui_app_paths())
+    return packaged_gui_app_paths()
+
+
+def _installed_desktop_apps() -> list[Path]:
+    return _update_owned_macos_bundles(_installed_desktop_app_candidates())
 
 
 def _installed_desktop_launch_target(desktop_dir: Path, packaged_executable: Path) -> Path:
