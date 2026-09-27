@@ -244,3 +244,59 @@ def test_published_gateway_host_preserves_newer_owner_and_tui_slot(tmp_path, mon
     newer.assert_called_once_with(value="kept")
     assert manager.has_tui_message_injector is True
     assert manager.inject_tui_message(session_key="ses_tui") is False
+
+
+class _LockWithHook:
+    """The published-host lock, running ``hook`` once at the first release: whatever a late attach
+    still has to do after that point races the hook."""
+
+    def __init__(self, hook):
+        import threading
+
+        self._lock = threading.Lock()
+        self._hook = hook
+
+    def __enter__(self):
+        self._lock.acquire()
+
+    def __exit__(self, *exc):
+        self._lock.release()
+        hook, self._hook = self._hook, None
+        if hook is not None:
+            hook()
+
+
+def test_late_attach_cannot_resurrect_a_cleared_gateway_owner(tmp_path, monkeypatch):
+    from hermes_cli import plugins
+    from hermes_cli.plugins import clear_published_gateway_message_host, publish_gateway_message_host
+
+    owner = object()
+    publish_gateway_message_host(owner, MagicMock(return_value=True))
+    manager = _manager_for_home(monkeypatch, tmp_path / "late")
+    manager._gateway_message_injector = None
+    monkeypatch.setattr(
+        plugins, "_published_gateway_host_lock",
+        _LockWithHook(lambda: clear_published_gateway_message_host(owner)))
+
+    plugins._attach_published_gateway_host(manager)
+
+    assert plugins._published_gateway_message_injector is None
+    assert manager.has_gateway_message_injector is False
+
+
+def test_late_attach_yields_to_a_newer_gateway_owner(tmp_path, monkeypatch):
+    from hermes_cli import plugins
+    from hermes_cli.plugins import PluginManager, publish_gateway_message_host
+
+    newer = MagicMock(return_value=True)
+    publish_gateway_message_host(object(), MagicMock(return_value=True))
+    manager = _manager_for_home(monkeypatch, tmp_path / "late")
+    manager._gateway_message_injector = None
+    monkeypatch.setattr(
+        plugins, "_published_gateway_host_lock",
+        _LockWithHook(lambda: publish_gateway_message_host("newer", newer)))
+
+    plugins._attach_published_gateway_host(manager)
+
+    assert manager.inject_gateway_message(value="routed") is True
+    newer.assert_called_once_with(value="routed")
