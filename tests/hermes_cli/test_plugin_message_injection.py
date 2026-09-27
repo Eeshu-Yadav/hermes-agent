@@ -181,3 +181,66 @@ def test_gateway_injection_fails_closed_on_host_exception(tmp_path, monkeypatch)
         )
         is False
     )
+
+
+def _manager_for_home(monkeypatch, home) -> PluginManager:
+    from hermes_cli.plugins import get_plugin_manager
+
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    return get_plugin_manager()
+
+
+def test_published_gateway_host_reaches_every_profile_manager(tmp_path, monkeypatch):
+    from hermes_cli.plugins import (
+        clear_published_gateway_message_host,
+        publish_gateway_message_host,
+    )
+
+    launch = _manager_for_home(monkeypatch, tmp_path / "launch")
+    secondary = _manager_for_home(monkeypatch, tmp_path / "profiles" / "ven")
+    assert launch is not secondary
+    owner = object()
+    injector = MagicMock(return_value=True)
+
+    publish_gateway_message_host(owner, injector)
+
+    assert launch.has_gateway_message_injector is True
+    assert secondary.has_gateway_message_injector is True
+    assert secondary.inject_gateway_message(session_key="agent:ven:telegram:dm:7") is True
+    injector.assert_called_once_with(session_key="agent:ven:telegram:dm:7")
+
+    later = _manager_for_home(monkeypatch, tmp_path / "profiles" / "later")
+    assert later is not secondary
+    assert later.has_gateway_message_injector is True
+
+    clear_published_gateway_message_host(owner)
+
+    assert launch.has_gateway_message_injector is False
+    assert secondary.has_gateway_message_injector is False
+    assert later.has_gateway_message_injector is False
+    after = _manager_for_home(monkeypatch, tmp_path / "profiles" / "after")
+    assert after.has_gateway_message_injector is False
+
+
+def test_published_gateway_host_preserves_newer_owner_and_tui_slot(tmp_path, monkeypatch):
+    from hermes_cli.plugins import (
+        clear_published_gateway_message_host,
+        publish_gateway_message_host,
+    )
+
+    manager = _manager_for_home(monkeypatch, tmp_path / "launch")
+    tui_owner, tui = object(), MagicMock(return_value=False)
+    manager.set_tui_message_injector(tui_owner, tui)
+    old_owner, new_owner = object(), object()
+    newer = MagicMock(return_value=True)
+
+    publish_gateway_message_host(old_owner, MagicMock(return_value=True))
+    manager.set_gateway_message_injector(new_owner, newer)
+    clear_published_gateway_message_host(old_owner)
+
+    assert manager.has_gateway_message_injector is True
+    assert manager.inject_gateway_message(value="kept") is True
+    newer.assert_called_once_with(value="kept")
+    assert manager.has_tui_message_injector is True
+    assert manager.inject_tui_message(session_key="ses_tui") is False
