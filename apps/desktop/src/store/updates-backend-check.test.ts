@@ -47,12 +47,25 @@ describe('mapBackendCheck', () => {
     expect(status.targetSha).toBe('backend:9.9.9')
   })
 
+  it('maps the "behind but uncountable" sentinel to behind: null, not 0', () => {
+    // The producer answers behind: -1 (source_check.UPDATE_AVAILABLE_NO_COUNT)
+    // when the checkout is behind but the count can't be computed (shallow
+    // clone without a merge-base, unusable compare API). DesktopUpdateStatus
+    // types that state as null — "never render it as a literal number" — so
+    // clamping -1 to 0 made it byte-identical to the up-to-date answer while
+    // updateAvailable still pitched the install.
+    const status = mapBackendCheck(response({ behind: -1, update_available: true }))
+
+    expect(status.error).toBeUndefined()
+    expect(status.behind).toBeNull()
+    expect(status.updateAvailable).toBe(true)
+    expect(status.targetSha).toBe('backend:9.9.9')
+  })
+
   it('leaves a backend that cannot self-update to the unsupported branch', () => {
     // pip/nix and managed runtimes also answer `behind: null`, but `can_apply: false` renders
     // the "not available" copy first — those must not be turned into failures.
-    const status = mapBackendCheck(
-      response({ can_apply: false, behind: null, message: 'pip install -U hermes-agent' })
-    )
+    const status = mapBackendCheck(response({ can_apply: false, behind: null, message: 'pip install -U hermes-agent' }))
 
     expect(status.supported).toBe(false)
     expect(status.error).toBeUndefined()
