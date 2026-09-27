@@ -1799,17 +1799,14 @@ class GatewayInboundMixin:
         """Publish this live gateway's plugin message scheduler to every profile manager."""
         from hermes_cli.plugins import get_plugin_manager, publish_gateway_message_host
 
+        get_plugin_manager()
         publish_gateway_message_host(self, self._schedule_plugin_message_injection)
-        get_plugin_manager().set_gateway_message_injector(
-            self, self._schedule_plugin_message_injection
-        )
 
     def _clear_plugin_message_injector(self) -> None:
         """Remove this runner's scheduler everywhere without clobbering a newer owner."""
-        from hermes_cli.plugins import clear_published_gateway_message_host, get_plugin_manager
+        from hermes_cli.plugins import clear_published_gateway_message_host
 
         clear_published_gateway_message_host(self)
-        get_plugin_manager().clear_gateway_message_injector(self)
 
     def _schedule_plugin_message_injection(
         self, *, session_key: str, content: str, plugin_id: str

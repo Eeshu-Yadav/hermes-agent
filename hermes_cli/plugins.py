@@ -1687,8 +1687,8 @@ def publish_gateway_message_host(owner: object, injector: Callable[..., bool]) -
     global _published_gateway_message_injector
     with _published_gateway_host_lock:
         _published_gateway_message_injector = (owner, injector)
-    for manager in _known_plugin_managers():
-        manager.set_gateway_message_injector(owner, injector)
+        for manager in _known_plugin_managers():
+            manager.set_gateway_message_injector(owner, injector)
 
 
 def clear_published_gateway_message_host(owner: object) -> None:
@@ -1698,8 +1698,8 @@ def clear_published_gateway_message_host(owner: object) -> None:
         if (_published_gateway_message_injector is not None
                 and _published_gateway_message_injector[0] is owner):
             _published_gateway_message_injector = None
-    for manager in _known_plugin_managers():
-        manager.clear_gateway_message_injector(owner)
+        for manager in _known_plugin_managers():
+            manager.clear_gateway_message_injector(owner)
 
 
 def _attach_published_gateway_host(manager: PluginManager) -> None:
