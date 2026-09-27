@@ -91,6 +91,12 @@ interface HandoffResult {
   error?: string
 }
 
+const IMAGE_NOT_FOUND_CODE = 4016
+
+function isImageNotFoundOnGateway(err: unknown): boolean {
+  return err instanceof JsonRpcGatewayError && err.code === IMAGE_NOT_FOUND_CODE && /image not found/i.test(err.message)
+}
+
 /**
  * Stage one file/image attachment into the session workspace and return the
  * attachment rewritten with the gateway-side ref. Attachments upload their
@@ -118,7 +124,11 @@ export async function uploadComposerAttachment(
   const { backendCwd, remote, requestGateway, storedSessionId, onRecovered, onSessionRecovered, terminalBackend } = opts
   const path = attachment.path ?? ''
   const label = attachment.label || pathLabel(path)
-  const uploadBytes = remote || attachmentPathNeedsUpload(path, backendCwd, terminalBackend)
+
+  const uploadBytes =
+    remote ||
+    (attachment.kind === 'image' && attachment.staged === true) ||
+    attachmentPathNeedsUpload(path, backendCwd, terminalBackend)
 
   // Read bytes/paths ONCE, outside the retry. Only the session-scoped RPC is
   // replayed on recovery — re-reading a multi-MB file to retry a dead session
@@ -144,18 +154,36 @@ export async function uploadComposerAttachment(
     }
   }
 
+  const attachImageBytes = (liveSessionId: string, payload: NonNullable<typeof imagePayload>) =>
+    requestGateway<ImageAttachResponse>('image.attach_bytes', {
+      session_id: liveSessionId,
+      content_base64: payload.contentBase64,
+      filename: payload.filename
+    })
+
+  const attachImageByPathOrBytes = async (liveSessionId: string): Promise<ImageAttachResponse> => {
+    try {
+      return await requestGateway<ImageAttachResponse>('image.attach', { path, session_id: liveSessionId })
+    } catch (err) {
+      if (!isImageNotFoundOnGateway(err)) {
+        throw err
+      }
+
+      imagePayload = await readImageForRemoteAttach(path, attachment.previewUrl).catch(() => null)
+
+      if (!imagePayload) {
+        throw err
+      }
+
+      return attachImageBytes(liveSessionId, imagePayload)
+    }
+  }
+
   const stageForSession = async (liveSessionId: string): Promise<ComposerAttachment> => {
     if (attachment.kind === 'image') {
       const result = imagePayload
-        ? await requestGateway<ImageAttachResponse>('image.attach_bytes', {
-            session_id: liveSessionId,
-            content_base64: imagePayload.contentBase64,
-            filename: imagePayload.filename
-          })
-        : await requestGateway<ImageAttachResponse>('image.attach', {
-            path,
-            session_id: liveSessionId
-          })
+        ? await attachImageBytes(liveSessionId, imagePayload)
+        : await attachImageByPathOrBytes(liveSessionId)
 
       if (!result.attached) {
         throw new Error(result.message || `Could not attach ${label}`)

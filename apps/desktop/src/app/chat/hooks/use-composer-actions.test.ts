@@ -452,9 +452,45 @@ describe('useComposerActions native image drops', () => {
     expect(add).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'image',
-        path: durablePath
+        path: durablePath,
+        staged: true
       })
     )
+  })
+
+  it('marks a pasted clipboard image as composer-staged', async () => {
+    const stagedPath = '/Users/test/Library/Application Support/Hermes/composer-images/composer_paste.png'
+    const saveClipboardImage = vi.fn(async () => stagedPath)
+    const readFileDataUrl = vi.fn(async () => 'data:image/png;base64,cGFzdGU=')
+    const add = vi.fn<(attachment: ComposerAttachment) => void>()
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { readFileDataUrl, saveClipboardImage }
+    })
+
+    const { result } = renderHook(() =>
+      useComposerActions({
+        activeSessionId: null,
+        currentCwd: '/Users/test/project',
+        requestGateway: vi.fn(),
+        scope: {
+          add,
+          remove: vi.fn(() => null),
+          target: 'test-composer',
+          update: vi.fn(() => true),
+          updateIfCurrent: vi.fn(() => true)
+        }
+      })
+    )
+
+    let pasted = false
+
+    await act(async () => {
+      pasted = await result.current.pasteClipboardImage()
+    })
+
+    expect(pasted).toBe(true)
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ kind: 'image', path: stagedPath, staged: true }))
   })
 })
 
