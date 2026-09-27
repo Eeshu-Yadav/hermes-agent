@@ -58,7 +58,7 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-function launch(env, config) {
+function launch(env, config, extraEnv = {}) {
   const home = mkdtempSync(join(root, 'home-'))
 
   if (config) {
@@ -73,7 +73,8 @@ function launch(env, config) {
       PATH: process.env.PATH,
       HERMES_HOME: home,
       NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
-      ...env
+      ...env,
+      ...extraEnv
     }
   })
 
@@ -98,4 +99,37 @@ test('the bundled entry lets desktop.electron_flags choose the ozone platform', 
   expect(launch({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, config)).toEqual({
     relaunched: ['.', '--ozone-platform=x11']
   })
+})
+
+// The bundled entry must read config.yaml from the same home main.ts does
+// (resolveDesktopHermesHome), or desktop.electron_flags set for the real
+// profile silently never reaches the relaunch. The two cases below are the
+// ones the inline resolution in configuredElectronFlags() got wrong: the
+// data-dir suffix channel installs rely on, and multiplexed profiles/ homes.
+test('the bundled entry reads desktop.electron_flags through a suffixed home', () => {
+  const config = 'desktop:\n  electron_flags:\n    - --ozone-platform=x11\n'
+  const home = mkdtempSync(join(root, 'suffixed-home-'))
+  mkdirSync(join(home, '.hermes-canary'), { recursive: true })
+  writeFileSync(join(home, '.hermes-canary', 'config.yaml'), config)
+
+  expect(
+    launch({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, undefined, {
+      HERMES_DATA_DIR_SUFFIX: '-canary',
+      HERMES_HOME: '',
+      HOME: home
+    })
+  ).toEqual({ relaunched: ['.', '--ozone-platform=x11'] })
+})
+
+test('the bundled entry reads desktop.electron_flags from the parent of a profiles/-rooted HERMES_HOME', () => {
+  const config = 'desktop:\n  electron_flags:\n    - --ozone-platform=x11\n'
+  const home = mkdtempSync(join(root, 'profiles-home-'))
+  mkdirSync(home, { recursive: true })
+  writeFileSync(join(home, 'config.yaml'), config)
+
+  expect(
+    launch({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, undefined, {
+      HERMES_HOME: join(home, 'profiles', 'alpha')
+    })
+  ).toEqual({ relaunched: ['.', '--ozone-platform=x11'] })
 })

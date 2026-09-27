@@ -4,18 +4,24 @@ import path from 'node:path'
 
 import { app } from 'electron'
 
+import { resolveDesktopHermesHome } from './data-paths'
 import { readDesktopLaunchConfig } from './renderer-heap-flags'
 import { wslgLaunchArgs } from './wslg-launch'
 import { spawnWslgLaunch } from './wslg-launch-process'
 
 function configuredElectronFlags(env: NodeJS.ProcessEnv): string[] {
-  const raw = env.HERMES_HOME
-
-  const home = raw
-    ? path.resolve(raw === '~' || raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(1)) : raw)
-    : env.HERMES_DESKTOP_USER_DATA_DIR
-      ? path.join(path.resolve(env.HERMES_DESKTOP_USER_DATA_DIR), 'hermes-home')
-      : path.join(os.homedir(), '.hermes')
+  // Resolve the home exactly like main.ts does, through the shared resolver:
+  // HERMES_DATA_DIR_SUFFIX channel installs and profiles/-rooted HERMES_HOME
+  // values must pick the same config.yaml before the relaunch and inside the
+  // app, or desktop.electron_flags silently never reaches the relaunch.
+  const home = resolveDesktopHermesHome({
+    home: os.homedir(),
+    env,
+    // Linux-only pre-launch path; the win32 legacy-migration probe is never
+    // consulted on posix, so its directoryExists callback is not needed here.
+    directoryExists: () => false,
+    readWindowsHome: () => null
+  })
 
   try {
     return readDesktopLaunchConfig(readFileSync(path.join(home, 'config.yaml'), 'utf8')).electronFlags
