@@ -1706,8 +1706,8 @@ def _attach_published_gateway_host(manager: PluginManager) -> None:
     """Give a newly resolved manager the process gateway host, if one is installed and the slot is empty."""
     with _published_gateway_host_lock:
         host = _published_gateway_message_injector
-        if host is not None and manager._gateway_message_injector is None:
-            manager._gateway_message_injector = host
+        if host is not None and not manager.has_gateway_message_injector:
+            manager.set_gateway_message_injector(*host)
 
 
 def get_plugin_manager() -> PluginManager:
