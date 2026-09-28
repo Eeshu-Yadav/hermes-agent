@@ -4,6 +4,7 @@ from queue import SimpleQueue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 import hermes_yaml as yaml
 
 from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
@@ -300,3 +301,30 @@ def test_late_attach_yields_to_a_newer_gateway_owner(tmp_path, monkeypatch):
 
     assert manager.inject_gateway_message(value="routed") is True
     newer.assert_called_once_with(value="routed")
+
+
+def _home_with_injection(tmp_path, name: str, allowed: bool):
+    home = tmp_path / name
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        yaml.safe_dump({"plugins": {"entries": {"notify-plugin": {"allow_gateway_injection": allowed}}}})
+    )
+    return home
+
+
+@pytest.mark.parametrize(("launch_allows", "secondary_allows"), [(True, False), (False, True)])
+def test_gateway_injection_permission_comes_from_the_plugins_own_profile(
+    tmp_path, monkeypatch, launch_allows, secondary_allows
+):
+    from hermes_cli.plugins import publish_gateway_message_host
+
+    launch = _home_with_injection(tmp_path, "launch", launch_allows)
+    secondary = _home_with_injection(tmp_path, "secondary", secondary_allows)
+    injector = MagicMock(return_value=True)
+    publish_gateway_message_host(object(), injector)
+    secondary_manager = _manager_for_home(monkeypatch, secondary)
+    context = PluginContext(PluginManifest(name="notify-plugin", key="notify-plugin", source="user"), secondary_manager)
+    monkeypatch.setenv("HERMES_HOME", str(launch))
+
+    assert context.inject_message("wake up", session_key="agent:secondary:telegram:dm:7") is secondary_allows
+    assert injector.call_count == (1 if secondary_allows else 0)
